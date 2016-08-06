@@ -3,7 +3,7 @@
 
 #  IPv6 Path MTU check and display utility functions
 #
-#   Tested on FreeBSD 8.0  and FreeBSD 7.2-RELEASE-p3
+#   Tested on FreeBSD 10.0
 #    
 #   See show_usage() for descriptions...
 #
@@ -44,7 +44,7 @@
 #  --probably others that I do not know about yet....
 
 #
-# Copyright (c) 2009 David Horn - All rights reserved.
+# Copyright (c) 2009-2016 David Horn - All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -260,7 +260,7 @@ start_query() {
 
    #Check system hostcache for the address in question ($host_addr)
    check_cache
-   mkdir ~/.`basename $0`/
+   [  -d ~/.`basename $0` ] || mkdir ~/.`basename $0`/
    pmtu_tcpdump_flags="-tqnlp \
       -i $defaultroute_interface ip6[40]=2 or ip6[40]=129 "
    tcpdump $pmtu_tcpdump_flags >~/.`basename $0`/tcpdump.out 2>/dev/null &
