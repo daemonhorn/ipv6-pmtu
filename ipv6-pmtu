@@ -1,0 +1,378 @@
+#!/bin/sh
+#
+
+#  IPv6 Path MTU check and display utility functions
+#
+#   Tested on FreeBSD 8.0  and FreeBSD 7.2-RELEASE-p3
+#    
+#   See show_usage() for descriptions...
+#
+#   $FreeBSD$
+#
+#   Dependancies:
+#      grep, cut, basename, expr, sort, ping6, tcpdump, host, sysctl, route
+#   Why ?
+#      Because I wanted to create a pmtu discovery debug tool that worked
+#      better (IMO) than the existing options, and interacted with the system 
+#      hostcache.
+#       
+
+#  Todo:
+#  --clearcache on initial invocation takes upto 300 secs. Need to check
+#    for completion rather than just sleep() (added warning message)
+#  --results only get cached in system hostcache on icmp6 'packet too big' 
+#    not 'echo reply'. This is per RFC 1981. 
+#  --Will work for blackhole pmtu detection only when host allows
+#    icmp6 type 128/129.  Need to consider other ways.
+#  --default interface in routing table may not always be the correct
+#    interface for tcpdump (better to provide override via command line)
+#  --hosts with blackhole pmtu will be SLOW (~90 seconds to probe)
+#    added status updates via echo of '.' char to give user feedback.
+#  --audit exit codes and stderr output for external apps and
+#    and internal functions. (provide better error handling)
+#  --handle SIGINT ? in tcpdump/debug ?  (seems to work at the moment)
+#  --pmtu mode blackhole on/off knob
+#  --more efficient blackhole query algorithm (not just test_mtu - 8)
+#  --udp and/or tcp protocol pmtu vs icmp6 only (not certain how feasible)
+#  --audit regex to make work more better ;)
+#  --style(5) cleanup
+#  --osx compatability (netstat -ral instead of hostcache, etc.) tbd
+#  --testing on other platforms and/or against tracepath6 tbd
+#  --look at tracepath6 code for inspiration
+#  --look at ping6 -m handling code for better understanding
+#  --DOC:report bug in netstat(1) man page pmtu info display nonexistent
+#  --probably others that I do not know about yet....
+
+#
+# Copyright (c) 2009 David Horn - All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+
+
+# Use cases:
+#
+#   GOOD - on-link ipv6 host mtu = interface mtu, icmp 128/129
+#   FAIL - on-link ipv6 host mtu = interface mtu, no icmp 128/129 
+#   GOOD - upstream router pmtu = 1480 icmp 2, dest host icmp 128/129 
+#   GOOD - upstream router pmtu = 1480 icmp 2, secondary router pmtu = 1280
+#      
+
+#   freebsd.isc.org - asymmetric 1480/1280
+#   www.freebsd.org - icmp 2 - 1280
+#   www.google.com  - icmp 2 - 1280
+#   ipv6.netflix.com - blackhole 1280
+
+
+
+
+
+
+
+
+show_usage()   {
+   printf "usage:\t `basename $0` host \n"
+   printf "\t `basename $0` [command] [host]\n\n"
+   printf "Commands:\n"
+   printf " query\t\t -- Perform pmtu discovery to host <default>\n"
+   printf " debug\t\t -- Debug (verbose) pmtu discovery to host\n"
+   printf " quiet\t\t -- Less verbose pmtu discovery to host\n"
+   printf " showcache\t -- Show the system hostcache\n"
+   printf " clearcache\t -- Clear the system hostcache\n"
+   printf " defaultroute\t -- Show IPv6 default route mtu"
+   printf "\n\n This utility will attempt to determine the correct IPv6 path" 
+   printf "\n mtu for a given host.  The global kernel hostcache will be" 
+   printf "\n consulted first, then the path mtu will be derived via"
+   printf "\n active icmp6 probing.  This will be done by looking for the" 
+   printf "\n icmp6 message 'packet too big'.  This utility requires the"
+   printf "\n superuser account for the debug and clearcache commands." 
+   printf "\n\nExamples:"
+   printf "\n\t`basename $0` www.kame.net"
+   printf "\n\t`basename $0` debug www.freebsd.org"
+   printf "\n\t`basename $0` showcache"
+   printf "\n"
+   
+   return
+}
+
+do_icmp6_probe() {
+   [ -n "$pmtu_debug" ] && echo "current mtu for testing: '$test_mtu'"
+   #ping6 payload size = ipv6 mtu - 40 byte ip6 header - 8 byte icmp6 header
+   test_size=`expr $test_mtu - 48`
+   test_result=`ping6 -mmv -c 1 -i 1 -o -b 1600 -s $test_size $host_addr && final_mtu="true"`
+   
+   [ $final_mtu = "true" ] && return 0  
+   # Check for icmp6 type 2 (packet too big) from the host (authoritative)
+   if [ `echo $test_result | grep -c "$host_addr: Packet too big mtu"` -gt 0 ]\
+         ; then
+      test_mtu=`echo $test_result | grep "$host_addr: Packet too big mtu" | \
+         grep -o '=.[0-9]\{4,5\}' | cut -f 2 -d ' '`  
+      #echo "$test_result"    
+      [ -n "$pmtu_debug" ] && printf "end-host final pmtu found: '$test_mtu'"
+      final_mtu="true"
+      return 0
+   fi
+   # Check for icmp6 type 2 (packet too big) from a source other than our host
+   # under test. Do NOT assume this is the final mtu (unlike some other utilit-
+   # ies, and sometimes the hostcache)
+   if [ `echo $test_result | grep -c "Packet too big mtu"` -gt 0 ]; then
+      test_mtu=`echo $test_result | grep "Packet too big mtu" | \
+         grep -o '=.[0-9]\{4,5\}' | cut -f 2 -d ' ' | sort -gi | \
+         grep -m 1 -o '[0-9]\{4,5\}'`
+      #echo "$test_result"
+      [ -n "$pmtu_debug" ] && \
+      echo "pmtu response found from intermediary router: '$test_mtu'"
+      final_mtu="true"
+      return 0
+   fi
+   # Check for echo reply (icmp6 128/129) at the current mtu
+   if [ `echo $test_result | grep -c "$host_addr, icmp_seq="` -gt 0 ]; then
+      #echo "$test_result"    
+      [ -n "$pmtu_debug" ] && \
+      echo "successful echo reply response pmtu: '$test_mtu'"
+      final_mtu="true"
+      #grep "$host_addr" ~/.`basename $0`/tcpdump.out \
+      #   | grep -qc "echo reply" && final_mtu="true"
+      if [ "$final_mtu" = "true" ]; then
+         [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && \
+            ( [ -n "$blackhole" ] || [ -n "$asymmetric" ] ) \
+            && printf "\n"
+         [ -z "$pmtu_quiet" ] && echo \
+            "echo reply received, NOT fragmented, full roundtrip."
+         return 0
+      fi
+      test_mtu=`expr $test_mtu - 8`
+      [ "$test_mtu" -lt 1280 ] && final_mtu="true" && test_mtu="unknown" && \
+         return 1
+      [ "$test_mtu" -ge 1280 -a "$test_mtu" -lt 1288 ] && test_mtu=1280
+      final_mtu="false"
+      [ -z "$pmtu_quiet" ] && [ -z "$asymmetric" ] && \
+      echo -n "asymmetric path detected, please be patient." && \
+      asymmetric="true"
+      [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && echo -n "."
+      return 1
+   fi
+   #echo "$test_result" 
+   # Fall through, and try again with a smaller mtu until we get to the 
+   # minimum ipv6 mtu (1280)
+   [ -n "$pmtu_debug" ] && \
+   echo "no icmp6 response found (blackhole), reducing mtu."
+   [ -z "$pmtu_quiet" ] && [ -z "$blackhole" ] && \
+      echo -n "blackhole detected, please be patient. " && \
+      blackhole="true"
+   [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && echo -n "."
+   test_mtu=`expr $test_mtu - 8`
+   [ "$test_mtu" -lt 1280 ] && final_mtu="true" && test_mtu="unknown" && \
+      return 1
+   [ "$test_mtu" -ge 1280 -a "$test_mtu" -lt 1288 ] && test_mtu=1280
+   final_mtu="false"
+   return 1
+}
+
+get_defaultroute_data() {
+   local temp=""
+   local i=0
+   defaultroute_interface=`route get default -inet6 | grep "interface:" | \
+      tr -s ' ' | cut -f 3 -d ' '`
+   # the defaultroute mtu is in a different column based upon OS version,
+   # so dynamically locate the correct column number by parsing the output    
+   while [ "$temp" != "mtu" ]; do
+      i=`expr $i + 1`
+      temp=`route get default -inet6 | grep "mtu" | tr -s ' ' | \
+         cut -f $i -d ' '`
+   done  
+   defaultroute_mtu=`route get default -inet6 | grep -A 1 "mtu" | \
+      grep -v "mtu" | tr -s ' ' | cut -f $i -d ' '`
+   return
+}
+
+check_superuser() {
+   if [ `id -u` -ne 0 ]; then
+      echo "`basename $0`: Only the superuser may run the command '$1'."
+      exit 1
+   fi
+}
+
+check_hostaddr() {
+
+#Check for literal ipv6 global unicast addr using simple regex
+if echo "$1" | grep -q -m 1 -o '^2[0-9a-f]\{3\}:[0-9a-f:]\{4,30\}' ; then 
+   host_addr="$1"
+else
+   #Check host via dns lookup
+   host_addr="`host -t AAAA $1 2>/dev/null`"
+   if [ $? -ne 0 ]; then
+      show_usage
+      echo "`basename $0`: No global unicast IPv6 address associated with $1"
+      exit 1
+   fi
+   host_count=`echo "$host_addr" | grep -c "has.IPv6.address"`
+   if [ $host_count -ge 1 ] ; then
+      host_addr=`echo "$host_addr" | \
+         grep -m 1 -o '2[0-9a-f]\{3\}:[0-9a-f:]\{4,30\}'`
+   fi
+   if [ $host_count -lt 1 ] || [ -z "$host_addr" ] ; then
+      echo "`basename $0`: No global unicast IPv6 address associated with $1"
+      exit 1
+   fi
+   [ -z $pmtu_quiet ] && echo -n "`basename $0`: "
+   if [ $host_count -gt 1 ] ; then
+      [ -z $pmtu_quiet ] && echo -n "Warning: $1 has multiple addresses; "
+   fi 
+   
+   [ -z $pmtu_quiet ] && echo "using address '$host_addr'"
+
+fi
+}
+
+check_cache() {
+   cache_mtu="`sysctl net.inet.tcp.hostcache.list | grep "$host_addr" | \
+      cut -f 2-7 -d ' ' | grep -m 1 -o '[0-9]\{1,6\}'`"
+   if [ -z "$cache_mtu" ] || [ "$cache_mtu" -eq 0 ]; then
+      cache_mtu="not found"
+      return 1
+   fi
+   return 0
+}
+
+start_query() {   
+   # do dns lookups and validation for hostname / address provided
+   check_hostaddr $1
+
+   #Check system hostcache for the address in question ($host_addr)
+   check_cache
+   mkdir ~/.`basename $0`/
+   pmtu_tcpdump_flags="-tqnlp \
+      -i $defaultroute_interface ip6[40]=2 or ip6[40]=129 "
+   tcpdump $pmtu_tcpdump_flags >~/.`basename $0`/tcpdump.out 2>/dev/null &
+   tcpdump_pid=$!
+   if [ "$cache_mtu" = "not found" ] ; then 
+      #initialize test_mtu to the default mtu
+      test_mtu=$defaultroute_mtu
+
+      [ -z $pmtu_quiet ] && echo "Actively probing for pmtu... "
+      [ -n "$pmtu_debug" ] && tcpdump $pmtu_debug_tcpdump_flags \
+         >/dev/tty 2>/dev/null &
+      tcpdump_debug_pid=$!
+      sleep 2
+   else  
+      #Using cached results, set test_mtu to cached value
+      test_mtu=$cache_mtu
+      [ -n "$pmtu_debug" ] && \
+         echo -n "Full debug only possible on non-cached results. " && \
+         echo "Use '`basename $0` clearcache' first."
+      [ -z "$pmtu_quiet" ] && echo "Validating cached result ($cache_mtu)... "
+   fi
+   final_mtu="false"
+   #iterate through mtu test until results are final or fail
+   while [ "$final_mtu" = "false" ]; do
+      do_icmp6_probe
+   done
+   display_mtu=$test_mtu
+   #If there is no definitive result, display the cached result
+   [ "$test_mtu" = "unknown" ] && [ "$cache_mtu" != "not found" ] && \
+      display_mtu=$cache_mtu && echo -n "intermediary only result."
+   [ -n "$pmtu_debug" ] && [ $tcpdump_debug_pid ] && \
+      kill $tcpdump_debug_pid && sleep 2
+   [ $tcpdump_pid ] && kill $tcpdump_pid
+
+   output_data
+
+   return 0
+
+}
+
+output_data() {
+   # fixup formatting for blackhole / asymmetric cases
+   #[ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && \
+   #   ( [ -z "$blackhole" ] && [ -z "$asymmetric" ] ) \
+   #   && printf "\n"
+   [ -z "$pmtu_quiet" ] && echo -n "The path MTU is: "
+
+   #Actually display the pmtu to the user
+   echo $display_mtu
+   [ "$display_mtu" = "unknown" ] && exit 1
+   return 0
+}
+
+# initialize the default mtu and default interface globals
+get_defaultroute_data
+
+# make sure we actually have the command line params
+[ "$#" -lt 1 ] && show_usage && echo "`basename $0`: Missing parameter(s)." && exit 1
+
+case $1 in
+debug)
+      check_superuser $1
+      shift
+      pmtu_debug="true"
+      # Check for icmp6(4) type 2 (too big) and type 129 (echo reply)
+      pmtu_debug_tcpdump_flags="-tqnlp -i $defaultroute_interface ip6[40]=2 \
+         or ip6[40]=129 "
+      echo "using interface: $defaultroute_interface for debug in tcpdump"
+      start_query $1
+      ;;
+query)
+      check_superuser $1
+      shift
+      start_query $1
+      ;;
+quiet)
+      check_superuser $1
+      shift
+      pmtu_quiet="true"
+      start_query $1
+      ;;
+showcache)
+      shift
+      if [ -n "$1" ]; then
+         check_hostaddr $1
+         check_cache
+         echo "Host '$1' cache pmtu data: $cache_mtu"
+      else
+         echo "Now displaying hostcache listing:"
+         sysctl net.inet.tcp.hostcache.list
+      fi
+      exit 0
+      ;;
+clearcache)
+      check_superuser $1
+      echo "Now clearing the entire contents of the tcp hostcache."
+      [ "`sysctl -n net.inet.tcp.hostcache.prune`" -gt 2 ] && \
+         printf "Initial invocation of clearcache may take upto " && \
+         printf "several minutes.\nCheck with '`basename $0` showcache'.\n"
+      sysctl net.inet.tcp.hostcache.prune=2 >> /dev/null
+      sysctl net.inet.tcp.hostcache.purge=1 >> /dev/null
+      sleep 2
+      exit 0
+      ;;
+defaultroute)
+      echo -n "The default inet6 interface route mtu is: $defaultroute_mtu"
+      echo " via interface: $defaultroute_interface"
+      exit 0
+      ;;
+*)
+      check_superuser "query"
+      start_query $1 
+      exit 1
+esac       
+
