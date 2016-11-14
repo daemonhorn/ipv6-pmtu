@@ -141,7 +141,6 @@ do_icmp6_probe() {
       #echo "$test_result"
       [ -n "$pmtu_debug" ] && \
       echo "pmtu response found from intermediary router: '$test_mtu'"
-      final_mtu="true"
       return 0
    fi
    # Check for echo reply (icmp6 128/129) at the current mtu
