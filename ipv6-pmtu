@@ -165,9 +165,9 @@ do_icmp6_probe() {
       [ "$test_mtu" -ge 1280 -a "$test_mtu" -lt 1288 ] && test_mtu=1280
       final_mtu="false"
       [ -z "$pmtu_quiet" ] && [ -z "$asymmetric" ] && \
-      echo -n "asymmetric path detected, please be patient." && \
+      printf "asymmetric path detected, please be patient." && \
       asymmetric="true"
-      [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && echo -n "."
+      [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && printf "."
       return 1
    fi
    #echo "$test_result" 
@@ -176,9 +176,9 @@ do_icmp6_probe() {
    [ -n "$pmtu_debug" ] && \
    echo "no icmp6 response found (blackhole), reducing mtu."
    [ -z "$pmtu_quiet" ] && [ -z "$blackhole" ] && \
-      echo -n "blackhole detected, please be patient. " && \
+      printf "blackhole detected, please be patient. " && \
       blackhole="true"
-   [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && echo -n "."
+   [ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && printf "."
    test_mtu=`expr $test_mtu - 8`
    [ "$test_mtu" -lt 1280 ] && final_mtu="true" && test_mtu="unknown" && \
       return 1
@@ -233,9 +233,9 @@ else
       echo "`basename $0`: No global unicast IPv6 address associated with $1"
       exit 1
    fi
-   [ -z $pmtu_quiet ] && echo -n "`basename $0`: "
+   [ -z $pmtu_quiet ] && printf "`basename $0`: "
    if [ $host_count -gt 1 ] ; then
-      [ -z $pmtu_quiet ] && echo -n "Warning: $1 has multiple addresses; "
+      [ -z $pmtu_quiet ] && printf "Warning: $1 has multiple addresses; "
    fi 
    
    [ -z $pmtu_quiet ] && echo "using address '$host_addr'"
@@ -277,7 +277,7 @@ start_query() {
       #Using cached results, set test_mtu to cached value
       test_mtu=$cache_mtu
       [ -n "$pmtu_debug" ] && \
-         echo -n "Full debug only possible on non-cached results. " && \
+         printf "Full debug only possible on non-cached results. " && \
          echo "Use '`basename $0` clearcache' first."
       [ -z "$pmtu_quiet" ] && echo "Validating cached result ($cache_mtu)... "
    fi
@@ -289,7 +289,7 @@ start_query() {
    display_mtu=$test_mtu
    #If there is no definitive result, display the cached result
    [ "$test_mtu" = "unknown" ] && [ "$cache_mtu" != "not found" ] && \
-      display_mtu=$cache_mtu && echo -n "intermediary only result."
+      display_mtu=$cache_mtu && printf "intermediary only result."
    [ -n "$pmtu_debug" ] && [ $tcpdump_debug_pid ] && \
       kill $tcpdump_debug_pid && sleep 2
    [ $tcpdump_pid ] && kill $tcpdump_pid
@@ -305,7 +305,7 @@ output_data() {
    #[ -z "$pmtu_quiet" ] && [ -z "$pmtu_debug" ] && \
    #   ( [ -z "$blackhole" ] && [ -z "$asymmetric" ] ) \
    #   && printf "\n"
-   [ -z "$pmtu_quiet" ] && echo -n "The path MTU is: "
+   [ -z "$pmtu_quiet" ] && printf "The path MTU is: "
 
    #Actually display the pmtu to the user
    echo $display_mtu
@@ -365,7 +365,7 @@ clearcache)
       exit 0
       ;;
 defaultroute)
-      echo -n "The default inet6 interface route mtu is: $defaultroute_mtu"
+      printf "The default inet6 interface route mtu is: $defaultroute_mtu"
       echo " via interface: $defaultroute_interface"
       exit 0
       ;;
