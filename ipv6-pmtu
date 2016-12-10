@@ -247,8 +247,12 @@ check_cache() {
    cache_mtu="`sysctl net.inet.tcp.hostcache.list | grep "$host_addr" | \
       cut -f 2-7 -d ' ' | grep -m 1 -o '[0-9]\{1,6\}'`"
    if [ -z "$cache_mtu" ] || [ "$cache_mtu" -eq 0 ]; then
-      cache_mtu="not found"
-      return 1
+      cache_mtu="`netstat -narWl -f inet6 | grep "$host_addr" | \
+       cut -f 46-53 -d ' ' | grep -m 1 -o '[0-9]\{1,6\}'`"
+      if [ -z "$cache_mtu" ] || [ "$cache_mtu" -eq 0 ]; then
+        cache_mtu="not found"
+        return 1
+      fi
    fi
    return 0
 }
@@ -276,10 +280,11 @@ start_query() {
    else  
       #Using cached results, set test_mtu to cached value
       test_mtu=$cache_mtu
+      #echo test_mtu
       [ -n "$pmtu_debug" ] && \
          printf "Full debug only possible on non-cached results. " && \
          echo "Use '`basename $0` clearcache' first."
-      [ -z "$pmtu_quiet" ] && echo "Validating cached result ($cache_mtu)... "
+      [ -z "$pmtu_quiet" ] && echo "Validating cached result: $cache_mtu... "
    fi
    final_mtu="false"
    #iterate through mtu test until results are final or fail
@@ -317,7 +322,7 @@ output_data() {
 get_defaultroute_data
 
 # make sure we actually have the command line params
-[ "$#" -lt 1 ] && show_usage && echo "`basename $0`: Missing parameter(s)." && exit 1
+[ "$#" -lt 1 ] && show_usage && echo "`basename $0`: Missing parameter." && exit 1
 
 case $1 in
 debug)
