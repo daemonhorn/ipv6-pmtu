@@ -376,7 +376,7 @@ showcache)
          echo "Host '$1' cache pmtu data: $cache_mtu"
       else
          echo "Now displaying hostcache listing:"
-         $pmtu_cache_cmd 
+         $pmtu_hostcache_cmd 
       fi
       exit 0
       ;;
