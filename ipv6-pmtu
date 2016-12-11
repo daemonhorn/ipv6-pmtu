@@ -216,18 +216,19 @@ check_os() {
    
    case $OS in
    FreeBSD)
-      pmtu_cache_cmd="sysctl net.inet.tcp.hostcache.list"
-      pmtu_cache_cut_fields="2-7"
+      pmtu_hostcache_cmd="sysctl net.inet.tcp.hostcache.list"
+      pmtu_hostcache_cut_fields="2"
       ;;
    Darwin)
-      pmtu_cache_cmd="netstat -narWl -f inet6"
-      pmtu_cache_cut_fields="46-53"
+      pmtu_hostcache_cmd="netstat -narWl -f inet6"
+      pmtu_hostcache_cut_fields="6"
       ;;
    *)
       echo "Unknown Operating System, exiting."
       exit 1
       ;;
    esac
+   return
 }
 
 check_hostaddr() {
@@ -263,8 +264,8 @@ fi
 }
 
 check_cache() {
-   cache_mtu="`$pmtu_cache_cmd | grep "$host_addr" | \
-      cut -f $pmtu_cache_cut_fields -d ' ' | grep -m 1 -o '[0-9]\{1,6\}'`"
+   cache_mtu="`$pmtu_hostcache_cmd | grep "$host_addr" | tr -s ' ' | \
+      cut -f $pmtu_hostcache_cut_fields -d ' ' | grep -m 1 -o '[0-9]\{1,6\}'`"
    if [ -z "$cache_mtu" ] || [ "$cache_mtu" -eq 0 ]; then
       cache_mtu="not found"
       return 1
@@ -283,15 +284,18 @@ start_query() {
       -i $defaultroute_interface ip6[40]=2 or ip6[40]=129 "
    tcpdump $pmtu_tcpdump_flags >~/.`basename $0`/tcpdump.out 2>/dev/null &
    tcpdump_pid=$!
+   #echo "TCPDUMP_PID is: $tcpdump_pid"
    if [ "$cache_mtu" = "not found" ] ; then 
       #initialize test_mtu to the default mtu
       test_mtu=$defaultroute_mtu
 
       [ -z $pmtu_quiet ] && echo "Actively probing for pmtu... "
-      [ -n "$pmtu_debug" ] && tcpdump $pmtu_debug_tcpdump_flags \
-         >/dev/tty 2>/dev/null &
-      tcpdump_debug_pid=$!
-      sleep 2
+      if [ -n "$pmtu_debug" ] ; then
+        tcpdump $pmtu_debug_tcpdump_flags >/dev/tty 2>/dev/null &
+        tcpdump_debug_pid=$!
+        #echo "TCPDUMP_DEBUG_PID is: $tcpdump_debug_pid"
+        sleep 2
+      fi
    else  
       #Using cached results, set test_mtu to cached value
       test_mtu=$cache_mtu
@@ -311,8 +315,8 @@ start_query() {
    [ "$test_mtu" = "unknown" ] && [ "$cache_mtu" != "not found" ] && \
       display_mtu=$cache_mtu && printf "intermediary only result."
    [ -n "$pmtu_debug" ] && [ $tcpdump_debug_pid ] && \
-      kill $tcpdump_debug_pid && sleep 2
-   [ $tcpdump_pid ] && kill $tcpdump_pid
+      kill -2 $tcpdump_debug_pid && sleep 2
+   [ $tcpdump_pid ] && kill -2 $tcpdump_pid
 
    output_data
 
