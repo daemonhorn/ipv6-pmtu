@@ -3,43 +3,44 @@
 
 #  IPv6 Path MTU check and display utility functions
 #
-#   Tested on FreeBSD 10.0
+#   Tested on FreeBSD 10/11, MacOS Sierra
 #    
 #   See show_usage() for descriptions...
 #
 #   $FreeBSD$
 #
 #   Dependancies:
-#      grep, cut, basename, expr, sort, ping6, tcpdump, host, sysctl, route
+#      grep, cut, basename, expr, sort, ping6, tcpdump, host, sysctl/netstat, route
 #   Why ?
 #      Because I wanted to create a pmtu discovery debug tool that worked
 #      better (IMO) than the existing options, and interacted with the system 
 #      hostcache.
 #       
 
-#  Todo:
-#  --clearcache on initial invocation takes upto 300 secs. Need to check
+#  Todo/known state:
+#  --clearcache implementation that works properly.
+#    FreeBSD sysctl invocation takes upto 300 secs. Need to check
 #    for completion rather than just sleep() (added warning message)
 #  --results only get cached in system hostcache on icmp6 'packet too big' 
 #    not 'echo reply'. This is per RFC 1981. 
 #  --Will work for blackhole pmtu detection only when host allows
-#    icmp6 type 128/129.  Need to consider other ways.
+#    icmp6 type 128/129.  Need to consider udp/tcp/other ways.
 #  --default interface in routing table may not always be the correct
 #    interface for tcpdump (better to provide override via command line)
-#  --hosts with blackhole pmtu will be SLOW (~90 seconds to probe)
+#  --hosts with blackhole pmtu will be SLOW (~90+ seconds to probe)
 #    added status updates via echo of '.' char to give user feedback.
 #  --audit exit codes and stderr output for external apps and
 #    and internal functions. (provide better error handling)
 #  --handle SIGINT ? in tcpdump/debug ?  (seems to work at the moment)
 #  --pmtu mode blackhole on/off knob
 #  --more efficient blackhole query algorithm (not just test_mtu - 8)
-#  --udp and/or tcp protocol pmtu vs icmp6 only (not certain how feasible)
+#  --udp and/or tcp protocol pmtu vs icmp6 only (not certain how much work)
 #  --audit regex to make work more better ;)
 #  --style(5) cleanup
-#  --osx compatability (netstat -ral instead of hostcache, etc.) tbd
+#  --osx compatability going backwards from Sierra 
 #  --testing on other platforms and/or against tracepath6 tbd
-#  --look at tracepath6 code for inspiration
 #  --look at ping6 -m handling code for better understanding
+#  --see if we can capture/report on "no route to host" messages in icmp6
 #  --DOC:report bug in netstat(1) man page pmtu info display nonexistent
 #  --probably others that I do not know about yet....
 
@@ -77,15 +78,10 @@
 #   GOOD - upstream router pmtu = 1480 icmp 2, secondary router pmtu = 1280
 #      
 
-#   freebsd.isc.org - asymmetric 1480/1280
+#   freebsd.isc.org - no route to host 
 #   www.freebsd.org - icmp 2 - 1280
 #   www.google.com  - icmp 2 - 1280
 #   ipv6.netflix.com - blackhole 1280
-
-
-
-
-
 
 
 
@@ -97,7 +93,7 @@ show_usage()   {
    printf " debug\t\t -- Debug (verbose) pmtu discovery to host\n"
    printf " quiet\t\t -- Less verbose pmtu discovery to host\n"
    printf " showcache\t -- Show the system hostcache\n"
-   printf " clearcache\t -- Clear the system hostcache\n"
+   printf " clearcache\t -- Clear the system hostcache(not implemented)\n"
    printf " defaultroute\t -- Show IPv6 default route mtu"
    printf "\n\n This utility will attempt to determine the correct IPv6 path" 
    printf "\n mtu for a given host.  The global kernel hostcache will be" 
