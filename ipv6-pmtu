@@ -40,6 +40,8 @@
 #  --osx compatability going backwards from Sierra 
 #  --testing on other platforms and/or against tracepath6 tbd
 #  --look at ping6 -m handling code for better understanding
+#  --examine OSX caching behavior after HTTP access
+#  --look into better intermediary-only response handling
 #  --see if we can capture/report on "no route to host" messages in icmp6
 #  --DOC:report bug in netstat(1) man page pmtu info display nonexistent
 #  --probably others that I do not know about yet....
