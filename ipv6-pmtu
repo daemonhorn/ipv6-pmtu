@@ -232,7 +232,7 @@ check_os() {
 check_hostaddr() {
 
 #Check for literal ipv6 global unicast addr using simple regex
-if echo "$1" | grep -q -m 1 -o '^2[0-9a-f]\{3\}:[0-9a-f:]\{4,30\}' ; then 
+if echo "$1" | grep -q -m 1 -o '^2[0-9a-f]\{3\}:[0-9a-f:]\{4,39\}' ; then 
    host_addr="$1"
 else
    #Check host via dns lookup
@@ -245,7 +245,7 @@ else
    host_count=`echo "$host_addr" | grep -c "has.IPv6.address"`
    if [ $host_count -ge 1 ] ; then
       host_addr=`echo "$host_addr" | \
-         grep -m 1 -o '2[0-9a-f]\{3\}:[0-9a-f:]\{4,30\}'`
+         grep -m 1 -o '2[0-9a-f]\{3\}:[0-9a-f:]\{4,39\}'`
    fi
    if [ $host_count -lt 1 ] || [ -z "$host_addr" ] ; then
       echo "`basename $0`: No global unicast IPv6 address associated with $1"
