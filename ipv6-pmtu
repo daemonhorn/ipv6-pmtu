@@ -116,7 +116,7 @@ do_icmp6_probe() {
    [ -n "$pmtu_debug" ] && echo "current mtu for testing: '$test_mtu'"
    #ping6 payload size = ipv6 mtu - 40 byte ip6 header - 8 byte icmp6 header
    test_size=`expr $test_mtu - 48`
-   test_result=`ping6 -mmv -c 1 -i 1 -o -b 1600 -s $test_size $host_addr && final_mtu="true"`
+   test_result=`$ping6_cmd $test_size $host_addr && final_mtu="true"`
    
    [ $final_mtu = "true" ] && return 0  
    # Check for icmp6 type 2 (packet too big) from the host (authoritative)
@@ -216,6 +216,7 @@ check_os() {
    FreeBSD)
       pmtu_hostcache_cmd="sysctl net.inet.tcp.hostcache.list"
       pmtu_hostcache_cut_fields="2"
+      ping6_cmd="ping6 -Dmmv -c 2 -i 1 -o -b 1600 -s"
       ;;
    Darwin)
       pmtu_hostcache_cmd="netstat -narWl -f inet6"
@@ -277,30 +278,21 @@ start_query() {
 
    #Check system hostcache for the address in question ($host_addr)
    check_cache
-   [  -d ~/.`basename $0` ] || mkdir ~/.`basename $0`/
-   pmtu_tcpdump_flags="-tqnlp \
-      -i $defaultroute_interface ip6[40]=2 or ip6[40]=129 "
-   tcpdump $pmtu_tcpdump_flags >~/.`basename $0`/tcpdump.out 2>/dev/null &
+   
+   tcpdump $tcpdump_flags >/dev/tty 2>/dev/null &
    tcpdump_pid=$!
    #echo "TCPDUMP_PID is: $tcpdump_pid"
    if [ "$cache_mtu" = "not found" ] ; then 
       #initialize test_mtu to the default mtu
       test_mtu=$defaultroute_mtu
-
       [ -z $pmtu_quiet ] && echo "Actively probing for pmtu... "
-      if [ -n "$pmtu_debug" ] ; then
-        tcpdump $pmtu_debug_tcpdump_flags >/dev/tty 2>/dev/null &
-        tcpdump_debug_pid=$!
-        #echo "TCPDUMP_DEBUG_PID is: $tcpdump_debug_pid"
-        sleep 2
-      fi
    else  
       #Using cached results, set test_mtu to cached value
       test_mtu=$cache_mtu
       #echo test_mtu
       [ -n "$pmtu_debug" ] && \
          printf "Full debug only possible on non-cached results. " && \
-         echo "Use '`basename $0` clearcache' first."
+         echo "Use '`basename $0` clearcache' first, or wait for cache to expire."
       [ -z "$pmtu_quiet" ] && echo "Validating cached result: $cache_mtu... "
    fi
    final_mtu="false"
@@ -312,9 +304,7 @@ start_query() {
    #If there is no definitive result, display the cached result
    [ "$test_mtu" = "unknown" ] && [ "$cache_mtu" != "not found" ] && \
       display_mtu=$cache_mtu && printf "intermediary only result."
-   [ -n "$pmtu_debug" ] && [ $tcpdump_debug_pid ] && \
-      kill -2 $tcpdump_debug_pid && sleep 2
-   [ $tcpdump_pid ] && kill -2 $tcpdump_pid
+   [ $tcpdump_pid ] && wait $tcpdump_pid
 
    output_data
 
@@ -335,8 +325,19 @@ output_data() {
    return 0
 }
 
+
 # initialize the default mtu and default interface globals
 get_defaultroute_data
+
+ # Check for icmp6(4) type 2 (too big) and type 129 (echo reply) or ipv6-fragment (proto 44)
+ # Alternate syntaxes:
+ # ip6 protochain 58 (chase protocol header and match ipv6-icmp (protocol 58)
+ # icmp6[icmp6type]=icmp6-echoreply or icmp6[icmp6type]=icmp6-packettoobig (newer libpcap syntax)
+ # Current best compat and most signal to noise filter is ip6[40] (icmp6 type is 40 bytes into the ipv6 packet)
+ # with the addition of just the ipv6-fragment match
+
+tcpdump_flags="-tqnlp -c 1 -i $defaultroute_interface ip6[40]=2 \
+         or ip6[40]=129 or ip6 protochain 44"
 
 # Check OS and fixup OS-specific function definitions
 check_os
@@ -349,9 +350,6 @@ debug)
       check_superuser $1
       shift
       pmtu_debug="true"
-      # Check for icmp6(4) type 2 (too big) and type 129 (echo reply)
-      pmtu_debug_tcpdump_flags="-tqnlp -i $defaultroute_interface ip6[40]=2 \
-         or ip6[40]=129 "
       echo "using interface: $defaultroute_interface for debug in tcpdump"
       start_query $1
       ;;
